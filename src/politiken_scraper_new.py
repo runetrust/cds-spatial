@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 import re
+import os
 import sys
 import logging
 from pathlib import Path
@@ -24,7 +25,7 @@ logging.basicConfig(
 log = logging.getLogger("politiken")
 
 base = "https://politiken.dk"
-login_api = "https://my.login.jppol.dk/u/login?state=hqFo2SBkSlA2dUNjOWYycTBSX2pzLXZUbE9FRWkzeEtEeVp5SKFur3VuaXZlcnNhbC1sb2dpbqN0aWTZIGcxTklzTDFtUExDZW4zaTVYbllxdG9BYVhKclp4T29vo2NpZNkgVVpkYmJpTkdIM01WTVczb3hleEtnMVg4UWpXamRGOWqlb3JnaWS0b3JnX05yMmZvYnJrSGl3Y3VPbWmnb3JnbmFtZalwb2xpdGlrZW4&ui_locales=da"
+login_api = "https://my.login.jppol.dk/u/login?state=hqFo2SBuRTBWWWx6MkFOVzlBeDZKdmpMQk1CLWFZUU9ObDVmT6Fur3VuaXZlcnNhbC1sb2dpbqN0aWTZIGl4Q255R0g5ZDJ6V1NNQzVEVjZaZHN2eXR4ekhqRWxao2NpZNkgVVpkYmJpTkdIM01WTVczb3hleEtnMVg4UWpXamRGOWqlb3JnaWS0b3JnX05yMmZvYnJrSGl3Y3VPbWmnb3JnbmFtZalwb2xpdGlrZW4&ui_locales=da"
 
 headers = {
     "User-Agent": (
@@ -295,10 +296,11 @@ def scrape_article(session, url) -> dict:
         "body": "\n\n".join(body_parts),
     }
 
-def save_checkpoint(articles, out_path) -> None:
+def save_checkpoint(articles, out_path: Path) -> None:
     """
     Atomically write articles to out_path via a temp file so a crash mid-write never corrupts the output.
     """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(out_path)
@@ -314,6 +316,8 @@ def scrape_search(
     checkpoint_every=200,
     out_path: Path = None,
 ) -> list[dict]:
+    if out_path is not None:
+        out_path = Path(out_path)
     all_articles = []
     current_url = search_url
     page = 1
@@ -403,11 +407,13 @@ def main():
         delay=args.delay,
         scrape_full_articles=args.no_full_articles,
         checkpoint_every=200,
-        out_path=Path(args.output)
+        out_path=f'"out"/{args.output}'
     )
-
-    out_path=Path(args.output)
-    out_path.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
+    root_dir = Path(__file__).parent.parent
+    out_path= root_dir / "out"
+    os.makedirs(out_path, exist_ok=True)
+    filename = Path(f'{out_path}/politiken_results.json')
+    filename.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("Results written to %s", out_path)
 
     # Print a quick summary to stdout
