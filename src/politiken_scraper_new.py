@@ -1,9 +1,3 @@
-'''
-25/05 THIS IS THE NEWEST VERSION OF THE SCRIPT
-Cleaned for irrelevant columns
-'''
-
-
 import argparse
 import json
 import time
@@ -113,9 +107,8 @@ def login(session, email, password):
 
 def parse_search_page(html) -> list[dict]:
     """
-    Extract article stubs from a Politiken search result page.
+    Extract article stubs
     Returns a list of dicts: {title, url, date, teaser}.
-
     Structure
       div.search-result__article
         time.time.time--large (date)
@@ -149,7 +142,7 @@ def parse_search_page(html) -> list[dict]:
             continue
 
         href = link_tag.get("href", "")
-        #Politiken href is relative
+        # href is relative
         url = urljoin(base, href)
 
         #Title
@@ -175,22 +168,16 @@ def parse_search_page(html) -> list[dict]:
 
         if title:
             articles.append({"title": title, "url": url, "date": date, "teaser": teaser})
-
     return articles
-
 
 def next_page_url(html, current_url) -> str | None:
     """
     Return the URL of the next search-result page, or None if we're on the last page.
-
-    Politiken paginates via a page parameter (0-indexed).
-    There is no explicit "next" instead detect whether the current
-    page returned any results and increment the counter.
     """
     soup = BeautifulSoup(html, "lxml")
 
     # Always reconstruct from current_url so all filter params are preserved. 
-    # Never follow an <a href> from the page because those drop the date/query filters.
+    # never follow an href from the page because those drop the date filters.
     parsed = urlparse(current_url)
     qs = parse_qs(parsed.query, keep_blank_values=True)
     current_page = int(qs.get("page", ["0"])[0])
@@ -204,10 +191,9 @@ def next_page_url(html, current_url) -> str | None:
     new_query = urlencode({k: v[0] for k, v in qs.items()})
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
 
-#Article scraping
 def scrape_article(session, url) -> dict:
     """
-    Fetch and parse a single Politiken article.
+    Fetch and parse a single article.
     Returns a dict with keys: url, title, date, body.
     """
     r = session.get(url, timeout=20)
@@ -217,7 +203,6 @@ def scrape_article(session, url) -> dict:
 
     soup = BeautifulSoup(r.text, "lxml")
 
-    #Title
     title = ""
     for sel in [
         "h1.article-intro__title",
@@ -230,8 +215,7 @@ def scrape_article(session, url) -> dict:
         if el:
             title = el.get_text(strip=True)
             break
-
-    #date
+    
     date = ""
     time_tag = (
         soup.select_one("time[datetime]")
@@ -281,14 +265,6 @@ def scrape_article(session, url) -> dict:
                 body_parts = paragraphs or [container.get_text(separator="\n", strip=True)]
                 break
 
-    #Last-resort: all <p> tags with substantial prose text
-    if not body_parts:
-        log.debug("No body container found, falling back to all <p> tags")
-        body_parts = [
-            p.get_text(strip=True) for p in soup.find_all("p")
-            if len(p.get_text(strip=True)) > 60
-        ]
-
     return {
         "url": url,
         "title": title,
@@ -306,7 +282,7 @@ def save_checkpoint(articles, out_path: Path) -> None:
     tmp.replace(out_path)
     log.info("Checkpoint saved: %d articles → %s", len(articles), out_path)
 
-#Main pipeline
+#Main pipe
 def scrape_search(
     session,
     search_url,
@@ -334,7 +310,7 @@ def scrape_search(
         log.info("  Found %d articles on page %d.", len(stubs), page)
 
         if not stubs:
-            log.info("No articles found on page %d – stopping pagination.", page)
+            log.info("No articles found on page %d – stopping.", page)
             break
 
         if scrape_full_articles:
@@ -366,13 +342,13 @@ def scrape_search(
     return all_articles
 
 def main():
-    parser = argparse.ArgumentParser(description="Scrape articles from Politiken.dk with subscriber login.")
+    parser = argparse.ArgumentParser(description="Scrape articles from Politiken.dk with potential for subscriber login.")
     parser.add_argument("--email", required=True, help="Politiken email")
     parser.add_argument("--password", required=True, help="Politiken password")
     parser.add_argument(
         "--url",
         default=("https://politiken.dk/search/?fDate=2005-01-01&tDate=2006-12-31&sort=pd"),
-        help="Search URL to scrape (default: 2005-2006 search)",)
+        help='Search URL to scrape (default: 2005-2006 search). Remember to wrap with "",')
     parser.add_argument(
         "--max-pages", type=int, default=None,
         help="Maximum number of search-result pages to fetch (Default None, crawls all)"
@@ -387,7 +363,7 @@ def main():
     )
     parser.add_argument(
         "--output", default="politiken_results.json",
-        help="Output JSON file path (default: politiken_results.json)"
+        help="Output JSON file name (default: politiken_results.json)"
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
@@ -416,7 +392,7 @@ def main():
     filename.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("Results written to %s", out_path)
 
-    # Print a quick summary to stdout
+    # Print a quick summary
     print(f"\n{'='*60}")
     print(f"Total articles scraped: {len(articles)}")
     print(f"Output file: {out_path.resolve()}")
