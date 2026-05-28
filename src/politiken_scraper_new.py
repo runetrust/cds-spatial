@@ -321,7 +321,7 @@ def main():
     root_dir = Path(__file__).parent.parent
     out_path= root_dir / "in" # outputting to the in folder for r analysis
     os.makedirs(out_path, exist_ok=True)
-    filename = Path(f'{out_path}/politiken_results.json')
+    filename = Path(f'{out_path}/{args.output}')
     filename.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("Results written to %s", out_path)
 
