@@ -26,7 +26,6 @@ cds-spatial/
 │   ├── kde/                       # KDE related outputs (plots as PNG and SpatialRasters)
 │   └── choropleth/                # Chropleth related outputs (plots as PNG)
 ├── requirements.txt
-└── setup.sh
 ```
 
 ---
@@ -45,13 +44,13 @@ cds-spatial/
 ```bash
 git clone https://github.com/runetrust/cds-spatial.git
 cd cds-spatial
-bash setup.sh
 ```
 
-`setup.sh` creates a Linux compatible Python virtual environment and installs the dependencies from `requirements.txt`. Activate it with:
+### Dependencies
+Install requiret packages for the entire pipline by running:
 
 ```bash
-source env/bin/activate
+pip install -r requirements.txt
 ```
 
 ---
