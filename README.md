@@ -1,9 +1,9 @@
 # Geographic Attention in Danish News Coverage
-### Mapping the Jyllands-Posten Muhammad Cartoon Crisis (2005–2006)
+### Mapping the Muhammad  Crisis (2005–2006)
 
-This project traces how Danish newspaper *Politiken* distributed its geographic attention before, during, and after the Jyllands-Posten Muhammad cartoon crisis. Articles are scraped, geoparsed via NER and the OpenCage geocoding API, and then visualised as KDE density surfaces and choropleth maps across three periods: pre-crisis, crisis peak, and post-crisis.
+This project traces how the Danish newspaper *Politiken* distributed its geographic attention before, during, and after the Muhammad crisis. Articles are scraped, geoparsed via NER and the OpenCage geocoding API, and then visualised as KDE density surfaces and choropleth maps across three periods: pre-crisis, crisis peak, and post-crisis.
 
-> **Data note:** Raw Politiken articles cannot be redistributed. However, if your institution holds an agreement with [Copydan Text og Node](https://www.copydan.dk/licenser/text-og-node), you are permitted to use the data for educational purposes. See the scraper instructions below.
+> **Data note:** Raw Politiken articles cannot be redistributed. However, if your institution holds an agreement with [Copydan Text & Node](https://www.copydan.dk/licenser/text-og-node), you are permitted to use the data for educational purposes. See the scraper instructions below.
 
 ---
 
@@ -19,14 +19,14 @@ cds-spatial/
 │   ├── reformat_json.py           # Step 5 – flatten to CSV
 │   ├── kde_w_centroids.Rmd        # Step 6a – KDE maps + centroid analysis
 │   └── Choropleth.Rmd             # Step 6b – choropleth maps
-├── in/                            # Intermediate files will be saved here
+├── in/                            # Intermediate files will be saved here (e.g. scraper output)
 ├── out/                           # Outputs: CSVs, rasters, PNGs
 │   ├── place_mentions.csv
 │   ├── geocache.json
 │   ├── kde/                       # KDE related outputs (plots as PNG and SpatialRasters)
 │   └── choropleth/                # Chropleth related outputs (plots as PNG)
-├── requirements.txt               # Dependencies
-└── setup.sh                       # Setup of virtual environment, if the IDE allows for such
+├── requirements.txt
+└── setup.sh
 ```
 
 ---
@@ -48,7 +48,7 @@ cd cds-spatial
 bash setup.sh
 ```
 
-`setup.sh` creates a Python virtual environment and installs the dependencies from `requirements.txt`. Activate it with:
+`setup.sh` creates a Linux compatible Python virtual environment and installs the dependencies from `requirements.txt`. Activate it with:
 
 ```bash
 source env/bin/activate
@@ -58,7 +58,8 @@ source env/bin/activate
 
 ## Pipeline
 
-Run the steps below in order from inside the `src/` directory.
+Run the steps below in order from inside the `src/` directory to scrape all articles in the period 01/01/2005 - 31/12/2006.
+CLI Also accepts a new url via the --url parameter (Remember to wrap it with "")
 
 ### Step 1 - Scrape articles
 
@@ -66,8 +67,6 @@ Run the steps below in order from inside the `src/` directory.
 python politiken_scraper_new.py \
   --email YOUR_POLITIKEN_EMAIL \
   --password YOUR_POLITIKEN_PASSWORD \
-  --url "https://politiken.dk/search/?fDate=2005-01-01&tDate=2006-12-31&sort=pd" \
-  --output politiken_results.json
 ```
 
 Key options:
@@ -109,11 +108,11 @@ Filters out implausible place names (too short, lowercase, digits, long phrases)
 python Geoparsing.py
 ```
 
-Looks up each unique place name via the OpenCage API and caches results in `out/geocache.json` so you never pay for the same lookup twice.
+Looks up each unique place name via the OpenCage API and caches results in `out/geocache.json` so the same lookup is never run twice.
 
 > **Manual change required:** You must insert your OpenCage API key in `Geoparsing.py` at line ~31:
 > ```python
-> geocoder = OpenCageGeocode("")  # <-- paste your key here
+> geocoder = OpenCageGeocode("")  # paste your key here
 > ```
 > Get a free key at [opencagedata.com](https://opencagedata.com/). The free tier allows 2,500 requests per day. If you have more unique place names than that, the commented-out line `#new_places = new_places[:2499]` below line 31 can be uncommented to slice the batch and avoid hitting the limit. Then re-run after the daily reset.
 
@@ -145,14 +144,14 @@ The `out/` directory already contains pre-computed outputs from the original run
 
 - `out/kde/` - KDE density rasters (`.tif`) and PNG maps with centroid trajectories
 - `out/choropleth/` - Choropleth PNGs for each period and the two difference maps
-- `out/place_mentions.csv` - Full place-mention dataset (6 MB, ~80 k rows)
+- `out/place_mentions.csv` - Full place-mention dataset
 - `out/geocache.json` - Cached geocoding results
 
 ---
 
 ## Restrictions of use
 
-For educational use under institutional Copydan Text og Node agreements. Raw article content may not be redistributed.
+For educational use under institutional Copydan Text & Node agreements. Raw article content may not be redistributed.
 
 
 ## Acknowledgements
@@ -160,4 +159,4 @@ For educational use under institutional Copydan Text og Node agreements. Raw art
 - **[saattrupdan/nbailab-base-ner-scandi](https://huggingface.co/saattrupdan/nbailab-base-ner-scandi)**: Scandinavian NER model used for place name extraction, developed by the NbAiLab team.
 - **[OpenCage Geocoding API](https://opencagedata.com/)**: Used for resolving place names to coordinates and country metadata.
 - **[Natural Earth](https://www.naturalearthdata.com/)**: Free vector map data used for world polygons in all visualisations, accessed via the [`rnaturalearth`](https://docs.ropensci.org/rnaturalearth/) R package.
-- **[Copydan Text og Node](https://www.copydan.dk/licenser/text-og-node)** — The licensing framework that permits institutional educational use of Danish news content.
+- **[Copydan Text & Node](https://www.copydan.dk/licenser/text-og-node)** The licensing framework that permits institutional educational use of Danish news content.
