@@ -43,7 +43,7 @@ cds-spatial/
 ### Installation
 
 ```bash
-git clone https://github.com/<your-username>/cds-spatial.git
+git clone https://github.com/runetrust/cds-spatial.git
 cd cds-spatial
 bash setup.sh
 ```
