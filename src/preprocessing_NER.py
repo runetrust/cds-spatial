@@ -58,5 +58,5 @@ for article in articles:
                               if p in all_places]
 
 
-with open("../in/politken_NER_preprocessed.json", "w", encoding="utf-8") as f:
+with open("../in/politiken_NER_preprocessed.json", "w", encoding="utf-8") as f:
     json.dump(articles, f, ensure_ascii=False, indent=2)

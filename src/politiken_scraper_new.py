@@ -316,10 +316,10 @@ def main():
         delay=args.delay,
         scrape_full_articles=args.no_full_articles,
         checkpoint_every=200,
-        out_path=f'out/{args.output}'
+        out_path=f'in/{args.output}'
     )
     root_dir = Path(__file__).parent.parent
-    out_path= root_dir / "out"
+    out_path= root_dir / "in" # outputting to the in folder for r analysis
     os.makedirs(out_path, exist_ok=True)
     filename = Path(f'{out_path}/politiken_results.json')
     filename.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
