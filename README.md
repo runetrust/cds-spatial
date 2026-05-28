@@ -47,7 +47,7 @@ cd cds-spatial
 ```
 
 ### Dependencies
-Install requiret packages for the entire pipline by running:
+Install required packages for the entire pipline by running:
 
 ```bash
 pip install -r requirements.txt
