@@ -4,9 +4,9 @@ import time
 import os
 import sys
 import logging
+import requests
 from pathlib import Path
 from urllib.parse import urljoin, urlencode, urlparse, parse_qs, urlunsplit, urlencode
-import requests
 from bs4 import BeautifulSoup
 
 #Logging
@@ -204,28 +204,6 @@ def scrape_article(session, url) -> dict:
                     break
                 node = node.find_next_sibling()
 
-    #Fallback: older semantic container selectors
-    if not body_parts:
-        for sel in [
-            "div.article__body",
-            "div[class*='article-body']",
-            "div[class*='article__content']",
-            "div.body-text",
-            "section[class*='body']",
-        ]:
-            container = soup.select_one(sel)
-            if container:
-                for tag in container.select(
-                    "aside, figure, script, style, "
-                    "[class*='ad-'], [class*='reklame'], "
-                    "[class*='related'], [class*='most-read']"
-                ):
-                    tag.decompose()
-                paragraphs = [p.get_text(strip=True) for p in container.find_all("p")
-                              if p.get_text(strip=True)]
-                body_parts = paragraphs or [container.get_text(separator="\n", strip=True)]
-                break
-
     return {
         "url": url,
         "title": title,
@@ -241,24 +219,18 @@ def save_checkpoint(articles, out_path: Path) -> None:
     tmp = out_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(out_path)
-    log.info("Checkpoint saved: %d articles → %s", len(articles), out_path)
+    log.info("Checkpoint saved: %d articles to %s", len(articles), out_path)
 
 #Main pipe
-def scrape_search(
-    session,
-    search_url,
-    max_pages=10,
-    delay=0.1,
-    scrape_full_articles=True,
-    checkpoint_every=200,
-    out_path: Path = None,
-) -> list[dict]:
+def scrape_search(session, search_url, max_pages=10, delay=0.1, scrape_full_articles=True,
+checkpoint_every=200, out_path: Path = None,) -> list[dict]:
     if out_path is not None:
         out_path = Path(out_path)
+
     all_articles = []
     current_url = search_url
     page = 1
-    last_checkpoint = 0  # track how many articles were in the last save
+    last_checkpoint = 0 # track how many articles were in the last save
 
     while current_url and (max_pages is None or page <= max_pages):
         log.info("Fetching search page %d: %s", page, current_url)
@@ -271,7 +243,7 @@ def scrape_search(
         log.info("  Found %d articles on page %d.", len(stubs), page)
 
         if not stubs:
-            log.info("No articles found on page %d – stopping.", page)
+            log.info("No articles found on page %d - stopping.", page)
             break
 
         if scrape_full_articles:
@@ -335,7 +307,7 @@ def main():
     session = build_session()
 
     if not login(session, args.email, args.password):
-        sys.exit("Aborting – login failed.")
+        sys.exit("stopping, login failed.")
 
     articles = scrape_search(
         session=session,
@@ -344,7 +316,7 @@ def main():
         delay=args.delay,
         scrape_full_articles=args.no_full_articles,
         checkpoint_every=200,
-        out_path=f'"out"/{args.output}'
+        out_path=f'out/{args.output}'
     )
     root_dir = Path(__file__).parent.parent
     out_path= root_dir / "out"
@@ -353,11 +325,10 @@ def main():
     filename.write_text(json.dumps(articles, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("Results written to %s", out_path)
 
-    # Print a quick summary
     print(f"\n{'='*60}")
     print(f"Total articles scraped: {len(articles)}")
-    print(f"Output file: {out_path.resolve()}")
-    print(f"{'='*60}\n")
+    print(f"Output file in: {out_path.resolve()}")
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     main()
