@@ -1,7 +1,6 @@
 import argparse
 import json
 import time
-import re
 import os
 import sys
 import logging
@@ -76,39 +75,13 @@ def login(session, email, password):
         log.info("Login response 200 – assuming success (check cookies).")
         return True
 
-    #Fallback to form-based login (older endpoint)
-    if r.status_code in (400, 401, 403, 404):
-        log.debug("JSON endpoint failed (%s), trying form login …", r.status_code)
-        login_page = session.get(f"{base}/log-ind/", timeout=20)
-        soup = BeautifulSoup(login_page.text, "lxml")
-
-        form = soup.find("form", id=lambda x: x and "login" in x.lower()) or \
-               soup.find("form", action=lambda x: x and "login" in x.lower())
-
-        if form:
-            action = urljoin(base, form.get("action", "/log-ind/"))
-            data = {}
-            for inp in form.find_all("input"):
-                name = inp.get("name")
-                if name:
-                    data[name] = inp.get("value", "")
-            data["email"] = email
-            data["password"] = password
-
-            r2 = session.post(action, data=data, timeout=20,
-                              headers={"Referer": f"{base}/log-ind/"})
-            if r2.status_code in (200, 302):
-                log.info("Form login posted (status %s).", r2.status_code)
-                return True
-
     log.error("Login failed (status %s). Check your credentials.", r.status_code)
     log.debug("Response body: %s", r.text[:300])
     return False
 
 def parse_search_page(html) -> list[dict]:
     """
-    Extract article stubs
-    Returns a list of dicts: {title, url, date, teaser}.
+    Extract article stubs.
     Structure
       div.search-result__article
         time.time.time--large (date)
@@ -122,18 +95,6 @@ def parse_search_page(html) -> list[dict]:
     # Primary selector
     items = soup.select("div.search-result__article")
     log.debug("div.search-result__article items found: %d", len(items))
-
-    # Fallback selectors in case Politiken tests a new layout
-    if not items:
-        for sel in [
-            "article.search-result",
-            "div[class*='search-result']",
-            "div.card div[class*='search']",
-        ]:
-            items = soup.select(sel)
-            if items:
-                log.debug("Fallback selector '%s' matched %d items", sel, len(items))
-                break
 
     for item in items:
         #Link (wraps both h2 title and h3 summary)
