@@ -1,0 +1,514 @@
+---
+title: "choropleth"
+author: "Markus Lundsfryd Jensen"
+date: "2026-05-25"
+output: html_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load("tidyverse","sf","rnaturalearth","rnaturalearthdata","patchwork", "ggspatial")
+```
+
+
+# Set parameters
+
+## Same bin boundaries as KDE script
+```{r}
+CRISIS_START <- as.Date("2005-09-30")
+CRISIS_END   <- as.Date("2006-03-30")
+CORPUS_START <- as.Date("2005-03-30")
+CORPUS_END   <- as.Date("2006-09-30")
+```
+
+
+## Minimum mentions per country to be included in the difference map
+```{r}
+MIN_COUNTRY_MENTIONS <- 1
+```
+
+
+# Map extent (same crop as KDE for visual consistency)
+```{r}
+MAP_XLIM <- c(-20, 80)
+MAP_YLIM <- c(10, 72)
+```
+
+
+#Load data
+```{r}
+mentions <- read_csv("../out/place_mentions.csv") %>%
+  mutate(date = as.Date(date)) %>%
+  filter(date >= CORPUS_START, date <= CORPUS_END) %>%
+  filter(!is.na(country)) %>%
+  mutate(period = case_when(
+    date < CRISIS_START                        ~ "pre_crisis",
+    date >= CRISIS_START & date <= CRISIS_END  ~ "crisis_peak",
+    date > CRISIS_END                          ~ "post_crisis"
+  )) %>%
+  mutate(period = factor(period,
+    levels = c("pre_crisis", "crisis_peak", "post_crisis")))
+```
+
+
+# Normalise by total mentions per period so counts are comparable
+# Raw counts would conflate geographic expansion with higher article volume
+```{r}
+period_totals <- mentions %>%
+  count(period, name = "total_mentions")
+
+country_counts <- mentions %>%
+  count(country, period) %>%
+  left_join(period_totals, by = "period") %>%
+  mutate(mention_share = n / total_mentions)
+```
+
+
+# Wide format: one row per country, columns for each period
+```{r}
+country_wide <- country_counts %>%
+  select(country, period, mention_share) %>%
+  pivot_wider(
+    names_from  = period,
+    values_from = mention_share,
+    values_fill = 0
+  )
+```
+
+
+
+# Difference scores (crisis peak relative to pre-crisis baseline)
+```{r}
+country_wide <- country_wide %>%
+  mutate(
+    diff_crisis   = crisis_peak - pre_crisis,
+    diff_recovery = post_crisis - crisis_peak
+  )
+
+# Apply minimum mention filter across all periods combined (legacy)
+country_mention_totals <- mentions %>%
+  count(country, name = "total") %>%
+  filter(total >= MIN_COUNTRY_MENTIONS)
+  
+
+#Define dictionrary for translation
+danish_to_natural_earth <- c(
+  # A
+  "Afghanistan"                                                                    = "Afghanistan",
+  "Albanien"                                                                       = "Albania",
+  "Algeriet"                                                                       = "Algeria",
+  "Amerikas Forenede Stater"                                                       = "United States",
+  "Andorra"                                                                        = "Andorra",
+  "Angola"                                                                         = "Angola",
+  "Anguilla"                                                                       = NA,
+  "Antigua og Barbuda"                                                             = "Antigua and Barbuda",
+  "Argentina"                                                                      = "Argentina",
+  "Armenien"                                                                       = "Armenia",
+  "Aserbajdsjan"                                                                   = "Azerbaijan",
+  "Australien"                                                                     = "Australia",
+  # B
+  "Bahamas"                                                                        = "Bahamas",
+  "Bahrain"                                                                        = "Bahrain",
+  "Bangladesh"                                                                     = "Bangladesh",
+  "Barbados"                                                                       = "Barbados",
+  "Belgien"                                                                        = "Belgium",
+  "Belize"                                                                         = "Belize",
+  "Benin"                                                                          = "Benin",
+  "Bermuda"                                                                        = NA,
+  "Bhutan"                                                                         = "Bhutan",
+  "Bolivia"                                                                        = "Bolivia",
+  "Bosnien og Hercegovina"                                                         = "Bosnia and Herzegovina.",
+  "Botswana"                                                                       = "Botswana",
+  "Brasilien"                                                                      = "Brazil",
+  "Britiske Indiske Ocean"                                                         = NA,
+  "Brunei"                                                                         = "Brunei Darussalam",
+  "Bulgarien"                                                                      = "Bulgaria",
+  "Burkina Faso"                                                                   = "Burkina Faso",
+  "Burundi"                                                                        = "Burundi",
+  # C
+  "Cambodia"                                                                       = "Cambodia",
+  "Cambodja"                                                                       = "Cambodia",
+  "Cameroun"                                                                       = "Cameroon",
+  "Canada"                                                                         = "Canada",
+  "Centralafrikanske Republik"                                                     = "Central African Republic",
+  "Chile"                                                                          = "Chile",
+  "Colombia"                                                                       = "Colombia",
+  "Costa Rica"                                                                     = "Costa Rica",
+  "Cuba"                                                                           = "Cuba",
+  "Cypern"                                                                         = "Cyprus",
+  # D
+  "Danmark"                                                                        = "Denmark",
+  "De palæstinensiske områder"                                                     = "Palestine",
+  "Demokratiske Republik Congo"                                                    = "Republic of the Congo",
+  "Den Islamiske Republik Iran"                                                    = "Iran",
+  "Djibouti"                                                                       = "Djibouti",
+  "Dominica"                                                                       = "Dominica",
+  "Dominikanske Republik"                                                          = "Dominican Republic",
+  # E
+  "East Germany"                                                                   = NA,
+  "Ecuador"                                                                        = "Ecuador",
+  "Egypten"                                                                        = "Egypt",
+  "El Salvador"                                                                    = "El Salvador",
+  "Elfenbenskysten"                                                                = "Côte d'Ivoire",
+  "Eritrea"                                                                        = "Eritrea",
+  "Estland"                                                                        = "Estonia",
+  "Etiopien"                                                                       = "Ethiopia",
+  # F
+  "Fiji"                                                                           = "Fiji",
+  "Filippinerne"                                                                   = "Philippines",
+  "Finland"                                                                        = "Finland",
+  "Forenede Arabiske Emirater"                                                     = "United Arab Emirates",
+  "France"                                                                         = "France",
+  "Frankrig"                                                                       = "France",
+  "Færøerne"                                                                       = "Faeroe Is.",
+  # G
+  "Gabon"                                                                          = "Gabon",
+  "Gambia"                                                                         = "The Gambia",
+  "Georgien"                                                                       = "Georgia",
+  "Ghana"                                                                          = "Ghana",
+  "Gibraltar"                                                                      = NA,
+  "Greece"                                                                         = "Greece",
+  "Grækenland"                                                                     = "Greece",
+  "Grønland"                                                                       = "Greenland",
+  "Guatemala"                                                                      = "Guatemala",
+  "Guernsey"                                                                       = NA,
+  "Guinea"                                                                         = "Guinea",
+  "Guinea-Bissau"                                                                  = "Guinea-Bissau",
+  "Guyana"                                                                         = "Guyana",
+  # H
+  "Haiti"                                                                          = "Haiti",
+  "Holland"                                                                        = "Netherlands",
+  "Honduras"                                                                       = "Honduras",
+  "Hviderusland"                                                                   = "Belarus",
+  # I
+  "Indien"                                                                         = "India",
+  "Indonesia"                                                                      = "Indonesia",
+  "Indonesien"                                                                     = "Indonesia",
+  "Irak"                                                                           = "Iraq",
+  "Iran"                                                                           = "Iran",
+  "Ireland"                                                                        = "Ireland",
+  "Irland"                                                                         = "Ireland",
+  "Island"                                                                         = "Iceland",
+  "Israel"                                                                         = "Israel",
+  "Italien"                                                                        = "Italy",
+  # J
+  "Jamaica"                                                                        = "Jamaica",
+  "Japan"                                                                          = "Japan",
+  "Jordan"                                                                         = "Jordan",
+  # K
+  "Kap Verde"                                                                      = "Cape Verde",
+  "Kasakhstan"                                                                     = "Kazakhstan",
+  "Kenya"                                                                          = "Kenya",
+  "Kina"                                                                           = "China",
+  "Kirgisistan"                                                                    = "Kyrgyzstan",
+  "Kosovo"                                                                         = "Kosovo",
+  "Kroatien"                                                                       = "Croatia",
+  "Kuwait"                                                                         = "Kuwait",
+  # L
+  "Laos"                                                                           = "Lao PDR",
+  "Lebanon"                                                                        = "Lebanon",
+  "Letland"                                                                        = "Latvia",
+  "Libanon"                                                                        = "Lebanon",
+  "Liberia"                                                                        = "Liberia",
+  "Libyen"                                                                         = "Libya",
+  "Liechtenstein"                                                                  = "Liechtenstein",
+  "Litauen"                                                                        = "Lithuania",
+  "Luxembourg"                                                                     = "Luxembourg",
+  # M
+  "Madagaskar"                                                                     = "Madagascar",
+  "Malawi"                                                                         = "Malawi",
+  "Malaysia"                                                                       = "Malaysia",
+  "Mali"                                                                           = "Mali",
+  "Malta"                                                                          = "Malta",
+  "Marokko"                                                                        = "Morocco",
+  "Marshalløerne"                                                                  = "Marshall Is.",
+  "Mauretanien"                                                                    = "Mauritania",
+  "Mauritius"                                                                      = "Mauritius",
+  "Mexico"                                                                         = "Mexico",
+  "Moldova"                                                                        = "Moldova",
+  "Monaco"                                                                         = "Monaco",
+  "Mongoliet"                                                                      = "Mongolia",
+  "Montenegro"                                                                     = "Montenegro",
+  "Mozambique"                                                                     = "Mozambique",
+  "Moçambique"                                                                     = "Mozambique",
+  "Myanmar"                                                                        = "Myanmar",
+  # N
+  "Namibia"                                                                        = "Namibia",
+  "Nederlandene"                                                                   = "Netherlands",
+  "Nepal"                                                                          = "Nepal",
+  "New Zealand"                                                                    = "New Zealand",
+  "Nicaragua"                                                                      = "Nicaragua",
+  "Niger"                                                                          = "Niger",
+  "Nigeria"                                                                        = "Nigeria",
+  "Nordcypern / Cypern"                                                            = "N. Cyprus",
+  "Nordkorea"                                                                      = "Dem. Rep. Korea",
+  "Nordmakedonien"                                                                 = "North Macedonia",
+  "Norge"                                                                          = "Norway",
+  # O
+  "Oman"                                                                           = "Oman",
+  # P
+  "Pakistan"                                                                       = "Pakistan",
+  "Panama"                                                                         = "Panama",
+  "Papua Ny Guinea"                                                                = "Papua New Guinea",
+  "Paraguay"                                                                       = "Paraguay",
+  "Pavestolen (Vatikanstaten)"                                                     = "Vatican",
+  "Peru"                                                                           = "Peru",
+  "Philippines"                                                                    = "Philippines",
+  "Polen"                                                                          = "Poland",
+  "Portugal"                                                                       = "Portugal",
+  # Q
+  "Qatar"                                                                          = "Qatar",
+  # R
+  "Republikken Congo"                                                              = "Republic of the Congo",
+  "Congo"                                                              = "Republic of the Congo",
+  "Republikken Korea (Sydkorea)"                                                   = "Republic of Korea",
+  "República Árabe Saharaui Democrática الجمهورية العربية الصحراوية الديمقراطية"  = "W. Sahara",
+  "Rumænien"                                                                       = "Romania",
+  "Rusland"                                                                        = "Russian Federation",
+  "Rwanda"                                                                         = "Rwanda",
+  # S
+  "Saint Vincent og Grenadinerne"                                                  = "St. Vin. and Gren.",
+  "Salomonøerne"                                                                   = "Solomon Islands",
+  "Samoa"                                                                          = "Samoa",
+  "San Marino"                                                                     = "San Marino",
+  "Saudi-Arabien"                                                                  = "Saudi Arabia",
+  "Schweiz"                                                                        = "Switzerland",
+  "Senegal"                                                                        = "Senegal",
+  "Serbien"                                                                        = "Serbia",
+  "Sierra Leone"                                                                   = "Sierra Leone",
+  "Singapore"                                                                      = "Singapore",
+  "Slovakiet"                                                                      = "Slovakia",
+  "Slovenien"                                                                      = "Slovenia",
+  "Somalia"                                                                        = "Somalia",
+  "Soomaaliland أرض الصومال"                                                       = "Somaliland",
+  "South Africa"                                                                   = "South Africa",
+  "Spanien"                                                                        = "Spain",
+  "Sri Lanka"                                                                      = "Sri Lanka",
+  "Storbritannien"                                                                 = "United Kingdom",
+  "Sudan"                                                                          = "Sudan",
+  "Surinam"                                                                        = "Suriname",
+  "Svalbard and Jan Mayen"                                                         = NA,
+  "Sverige"                                                                        = "Sweden",
+  "Sydafrika"                                                                      = "South Africa",
+  "Sydkorea"                                                                       = "Republic of Korea",
+  "Sydossetien"                                                                    = NA,
+  "Sydsudan"                                                                       = "S. South Sudan",
+  "Syria"                                                                          = "Syria",
+  "Syrien"                                                                         = "Syria",
+  # T
+  "Taiwan"                                                                         = "Taiwan",
+  "Tanzania"                                                                       = "Tanzania",
+  "Tchad"                                                                          = "Chad",
+  "Thailand"                                                                       = "Thailand",
+  "Tjekkiet"                                                                       = "Czech Republic",
+  "Togo"                                                                           = "Togo",
+  "Tokelau"                                                                        = NA,
+  "Tonga"                                                                          = "Tonga",
+  "Trinidad og Tobago"                                                             = "Trinidad and Tobago",
+  "Tunesien"                                                                       = "Tunisia",
+  "Turkmenistan"                                                                   = "Turkmenistan",
+  "Tyrkiet"                                                                        = "Turkey",
+  "Tyskland"                                                                       = "Germany",
+  # U
+  "USA"                                                                            = "United States",
+  "Uganda"                                                                         = "Uganda",
+  "Ukraine"                                                                        = "Ukraine",
+  "Ungarn"                                                                         = "Hungary",
+  "United Kingdom"                                                                 = "United Kingdom",
+  "Uruguay"                                                                        = "Uruguay",
+  "Usbekistan"                                                                     = "Uzbekistan",
+  # V
+  "Vanuatu"                                                                        = "Vanuatu",
+  "Vatikanstaten"                                                                  = "Vatican",
+  "Venezuela"                                                                      = "Venezuela",
+  "Vietnam"                                                                        = "Vietnam",
+  # Y
+  "Yemen"                                                                          = "Yemen",
+  # Z
+  "Zambia"                                                                         = "Zambia",
+  "Zimbabwe"                                                                       = "Zimbabwe",
+  # Æ Ø Å
+  "Østrig"                                                                         = "Austria",
+  "Østtimor"                                                                       = "Timor-Leste",
+  # Arabic
+  "الأراضي الفلسطينية"                                                             = "Palestine"
+)
+
+# Apply translation
+country_wide <- country_wide %>%
+  mutate(country = ifelse(
+    country %in% names(danish_to_natural_earth),
+    danish_to_natural_earth[country],
+    country
+  )) %>%
+  filter(!is.na(country))  # drop territories with no polygon
+```
+
+
+# Load world polygons and join
+
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  select(name, name_long, iso_a3, geometry)
+
+# Country name matching between OpenCage output and Natural Earth is imperfect
+# Some manual fixes may be needed - check join_check below for unmatched countries
+choropleth_data <- world %>%
+  left_join(country_wide, by = c("name_long" = "country"))
+
+# show which countries in the data didn't match polygons
+join_check <- country_wide %>%
+  filter(!country %in% world$name_long) %>%
+  pull(country)
+
+if (length(join_check) > 0) {
+  cat("Countries in data not matched to polygons. may need manual name fixes:\n")
+  print(join_check)
+}
+```
+#OBS cannot fix these. SHould not be big problem, as they are outside the scope of europe and are eliminated for all periods
+
+
+#functinof or plotting
+
+```{r}
+# Calculate symmetric limit spanning both difference rasters
+shared_limit <- max(
+  abs(country_wide$diff_crisis),
+  abs(country_wide$diff_recovery),
+  na.rm = TRUE
+)
+
+# Then pass it explicitly to both difference plots
+plot_choropleth <- function(data, fill_var, title,
+                            diverging = FALSE,
+                            fixed_limit = NULL,
+                            low = "#2c7bb6",
+                            mid = "white",
+                            high = "#d7191c") {
+
+  fill_values <- data[[fill_var]]
+
+  if (diverging) {
+    limit <- if (!is.null(fixed_limit)) fixed_limit else max(abs(fill_values), na.rm = TRUE)
+    scale <- scale_fill_gradient2(
+      low      = low,
+      mid      = mid,
+      high     = high,
+      midpoint = 0,
+      limits   = c(-limit, limit),
+      na.value = "grey85",
+      name     = "Δ mention\nshare"
+    )
+  } else {
+    scale <- scale_fill_gradient(
+      low      = "white",
+      high     = "#d73027",
+      na.value = "grey85",
+      name     = "Mention\nshare"
+    )
+  }
+
+  ggplot(data) +
+    geom_sf(aes(fill = .data[[fill_var]]), color = "grey40", linewidth = 0.2) +
+    scale +
+    coord_sf(xlim = MAP_XLIM, ylim = MAP_YLIM) +
+    annotation_scale(
+    location      = "br",
+    width_hint    = 0.2,
+    style         = "bar",
+    unit_category = "metric"
+  ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      axis.title      = element_blank(),
+      axis.text       = element_blank(),
+      panel.grid      = element_line(color = "grey90"),
+      legend.position = "right",
+      plot.title      = element_text(size = 20)
+    )
+}
+```
+
+
+
+# Individual period choropleths
+
+```{r}
+p_pre <- plot_choropleth(
+  choropleth_data, "pre_crisis",
+  "Pre-crisis mention share"
+)
+
+p_peak <- plot_choropleth(
+  choropleth_data, "crisis_peak",
+  "Crisis peak mention share"
+)
+
+p_post <- plot_choropleth(
+  choropleth_data, "post_crisis",
+  "Post-crisis mention share"
+)
+```
+
+
+# Difference choropleths
+
+```{r}
+# Pass shared_limit to both difference plots
+p_diff_crisis <- plot_choropleth(
+  choropleth_data, "diff_crisis",
+  "Change in mention share: Crisis Peak vs Pre-Crisis",
+  diverging    = TRUE,
+  fixed_limit  = shared_limit
+)
+
+p_diff_recovery <- plot_choropleth(
+  choropleth_data, "diff_recovery",
+  "Change in mention share: Post-Crisis vs Crisis Peak",
+  diverging    = TRUE,
+  fixed_limit  = shared_limit
+)
+```
+
+
+# Combined figures using patchwork
+
+```{r}
+# Three-period overview
+p_overview <- p_pre / p_peak / p_post +
+  plot_annotation(
+    title    = "Geographic distribution of news coverage across periods",
+    subtitle = "Mention share normalised within each period",
+    theme    = theme(plot.title = element_text(size = 13, face = "bold"))
+  )
+
+# Difference maps side by side
+p_diffs <- p_diff_crisis | p_diff_recovery +
+  plot_annotation(
+    title    = "Shifts in geographic attention before, during and after the cartoon crisis",
+    subtitle = "Difference in normalised mention share between periods",
+    theme    = theme(plot.title = element_text(size = 20, face = "bold"))
+  )
+```
+
+
+# Save
+
+```{r}
+ggsave("../out/choropleth/choropleth_overview.png", p_overview,
+       width = 10, height = 16, dpi = 300)
+
+ggsave("../out/choropleth/choropleth_diffs.png", p_diffs,
+       width = 16, height = 7,  dpi = 300)
+
+# Also save individually
+ggsave("../out/choropleth/choropleth_pre.png",           p_pre,           width = 10, height = 6, dpi = 300)
+ggsave("../out/choropleth/choropleth_peak.png",          p_peak,          width = 10, height = 6, dpi = 300)
+ggsave("../out/choropleth/choropleth_post.png",          p_post,          width = 10, height = 6, dpi = 300)
+ggsave("../out/choropleth/choropleth_diff_crisis.png",   p_diff_crisis,   width = 10, height = 6, dpi = 300)
+ggsave("../out/choropleth/choropleth_diff_recovery.png", p_diff_recovery, width = 10, height = 6, dpi = 300)
+
+```
+

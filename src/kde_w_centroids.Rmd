@@ -1,0 +1,479 @@
+---
+title: "centroid combined"
+author: "Markus Lundsfryd Jensen"
+date: "2026-05-25"
+output: html_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load("tidyverse","sf","terra","rnaturalearth","rnaturalearthdata","patchwork", "ggspatial")
+```
+
+
+# ==============================================================================
+# PARAMETERS
+# ==============================================================================
+
+```{r}
+CRISIS_START <- as.Date("2005-09-30")
+CRISIS_END   <- as.Date("2006-03-30")
+CORPUS_START <- as.Date("2005-03-30")
+CORPUS_END   <- as.Date("2006-09-30")
+
+KDE_BANDWIDTH <- 2
+RASTER_RES    <- 1
+MIN_MENTIONS  <- 1
+MAP_XLIM      <- c(-20, 80)
+MAP_YLIM      <- c(10, 72)
+```
+
+
+```{r}
+# Centroid computation method: "mean" or "weighted"
+# "mean" treats every mention equally regardless of how often a place appears
+# "weighted" weights by mention frequency, pulling centroid toward hotspots
+
+CENTROID_METHOD <- "weighted"
+
+
+```
+
+
+#Load and prepare data
+
+```{r}
+mentions <- read_csv("../out/place_mentions.csv") %>%
+  mutate(date = as.Date(date)) %>%
+  filter(date >= CORPUS_START, date <= CORPUS_END) %>%
+  filter(!is.na(lat), !is.na(lon)) %>%
+  filter(lat >= -90, lat <= 90, lon >= -180, lon <= 180) %>%
+  mutate(period = case_when(
+    date < CRISIS_START                        ~ "pre_crisis",
+    date >= CRISIS_START & date <= CRISIS_END  ~ "crisis_peak",
+    date > CRISIS_END                          ~ "post_crisis"
+  )) %>%
+  mutate(period = factor(period,
+    levels = c("pre_crisis", "crisis_peak", "post_crisis")))
+
+mention_counts <- mentions %>%
+  count(place) %>%
+  filter(n >= MIN_MENTIONS)
+
+mentions <- mentions %>%
+  filter(place %in% mention_counts$place)
+
+cat("Mentions per period:\n")
+print(table(mentions$period))
+```
+
+#COmpute centroids pr period
+```{r}
+compute_centroid <- function(df, method = "weighted") {
+
+  if (method == "weighted") {
+    # Weight each mention by how often that place appears in the period
+    weights <- df %>% count(place, lon, lat, name = "w")
+    centroid_lon <- weighted.mean(weights$lon, weights$w)
+    centroid_lat <- weighted.mean(weights$lat, weights$w)
+  } else {
+    centroid_lon <- mean(df$lon)
+    centroid_lat <- mean(df$lat)
+  }
+
+  tibble(lon = centroid_lon, lat = centroid_lat)
+}
+
+centroids <- mentions %>%
+  group_by(period) %>%
+  group_modify(~ compute_centroid(.x, method = CENTROID_METHOD)) %>%
+  ungroup()
+```
+
+
+# Convert to sf for plotting
+```{r}
+centroids_sf <- centroids %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+cat("\nCentroids per period:\n")
+print(centroids)
+```
+
+
+# Compute KDE for all periods, resample and save
+```{r}
+mentions_sf <- mentions %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+raster_template <- rast(
+  xmin = -180, xmax = 180,
+  ymin = -90,  ymax = 90,
+  resolution = RASTER_RES,
+  crs = "EPSG:4326"
+)
+
+compute_kde <- function(points_sf, template, bandwidth) {
+
+  if (nrow(points_sf) < 3) {
+    warning("Too few points for KDE - returning empty raster")
+    r <- template
+    values(r) <- 0
+    return(r)
+  }
+
+  coords  <- st_coordinates(points_sf)
+  x_seq   <- seq(-180, 180, by = res(template)[1])
+  y_seq   <- seq(-90,   90, by = res(template)[2])
+  grid    <- expand.grid(x = x_seq, y = y_seq)
+
+  kde_values <- sapply(1:nrow(grid), function(i) {
+    dx <- coords[, 1] - grid$x[i]
+    dy <- coords[, 2] - grid$y[i]
+    sum(exp(-(dx^2 + dy^2) / (2 * bandwidth^2)))
+  })
+
+  r <- rast(
+    data.frame(x = grid$x, y = grid$y, value = kde_values),
+    type = "xyz",
+    crs = "EPSG:4326"
+  )
+
+  r <- r / nrow(points_sf)
+  return(r)
+}
+
+
+kde_pre  <- compute_kde(filter(mentions_sf, period == "pre_crisis"),  raster_template, KDE_BANDWIDTH)
+kde_peak <- compute_kde(filter(mentions_sf, period == "crisis_peak"), raster_template, KDE_BANDWIDTH)
+kde_post <- compute_kde(filter(mentions_sf, period == "post_crisis"), raster_template, KDE_BANDWIDTH)
+
+kde_pre_r  <- resample(kde_pre,  raster_template, method = "bilinear")
+kde_peak_r <- resample(kde_peak, raster_template, method = "bilinear")
+kde_post_r <- resample(kde_post, raster_template, method = "bilinear")
+
+diff_crisis   <- kde_peak_r - kde_pre_r
+diff_recovery <- kde_post_r - kde_peak_r
+
+# Save rasters
+writeRaster(kde_pre_r,     "../out/kde/kde_pre.tif",      overwrite = TRUE)
+writeRaster(kde_peak_r,    "../out/kde/kde_peak.tif",     overwrite = TRUE)
+writeRaster(kde_post_r,    "../out/kde/kde_post.tif",     overwrite = TRUE)
+writeRaster(diff_crisis,   "../out/kde/diff_crisis.tif",  overwrite = TRUE)
+writeRaster(diff_recovery, "../out/kde/diff_recovery.tif",overwrite = TRUE)
+```
+
+```{r}
+#Read Rasters
+
+library(terra)
+
+kde_pre_r     <- rast("../out/kde/kde_pre.tif")
+kde_peak_r    <- rast("../out/kde/kde_peak.tif")
+kde_post_r    <- rast("../out/kde/kde_post.tif")
+diff_crisis   <- rast("../out/kde/diff_crisis.tif")
+diff_recovery <- rast("../out/kde/diff_recovery.tif")
+```
+
+
+#Define World polygons
+
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+
+# Define functions fot plotting
+
+```{r}
+raster_to_df <- function(r) {
+  as.data.frame(r, xy = TRUE) %>%
+    rename(value = 3) %>%
+    filter(!is.na(value))
+}
+
+# Period labels for plot titles
+period_labels <- c(
+  pre_crisis   = "Pre-crisis",
+  crisis_peak  = "Crisis peak",
+  post_crisis  = "Post-crisis"
+)
+
+# Consistent centroid colours per period so they read the same across all plots
+period_colours <- c(
+  pre_crisis  = "#1a9641",
+  crisis_peak = "#d7191c",
+  post_crisis = "#2c7bb6"
+)
+
+# !! Centroid point size
+CENTROID_SIZE <- 4
+
+# Base KDE plot (single period, no centroid yet)
+
+plot_kde_base <- function(raster_df,
+                          title,
+                          diverging = FALSE,
+                          shared_limit = NULL,
+                          low  = "#2166AC",   # darker blue
+                          mid  = "#F7F7F7",   # near-white
+                          high = "#B2182B") { # darker red
+
+  if (diverging) {
+
+    # Use shared limit if supplied so range becomes the same
+    limit <- ifelse(
+      is.null(shared_limit),
+      max(abs(raster_df$value), na.rm = TRUE),
+      shared_limit
+    )
+
+    # Clipping to avoid one extreme pixel dominating colours
+    raster_df <- raster_df %>%
+      mutate(value = pmax(pmin(value, limit), -limit))
+
+    fill_scale <- scale_fill_gradient2(
+  low       = low,
+  mid       = mid,
+  high      = high,
+  midpoint  = 0,
+  limits    = c(-limit, limit),
+  oob       = scales::squish,
+
+  # More granular legend ticks
+  breaks = pretty(
+    c(-limit, limit),
+    n = 7
+  ),
+
+  # Consistent decimal formatting
+  labels = scales::label_number(
+    accuracy = 0.0001
+  ),
+
+  name = expression(Delta~density)
+)
+
+  } else {
+
+    fill_scale <- scale_fill_gradient(
+      low  = "white",
+      high = "#B2182B",
+      name = "Attention\ndensity"
+    )
+  }
+
+  ggplot() +
+    geom_raster(data = raster_df,
+                aes(x = x, y = y, fill = value)) +
+
+    geom_sf(data = world,
+            fill = NA,
+            color = "grey35",
+            linewidth = 0.25) +
+
+    fill_scale +
+
+    coord_sf(
+      xlim = MAP_XLIM,
+      ylim = MAP_YLIM,
+      expand = FALSE
+    ) +
+    annotation_scale(
+    location      = "br",
+    width_hint    = 0.2,
+    style         = "bar",
+    unit_category = "metric"
+  ) + #include scale on bottom right
+
+    labs(title = title) +
+
+    theme_minimal(base_size = 11) +
+
+    theme(
+      axis.title      = element_blank(),
+      axis.text       = element_blank(),
+      axis.ticks      = element_blank(),
+      panel.grid      = element_blank(),
+
+      plot.title = element_text(
+        size = 20
+      ),
+
+      legend.position = "right",
+
+      legend.title = element_text(
+        face = "bold"
+      )
+    )
+}
+```
+
+
+# Add a single centroid point to an existing plot
+```{r}
+add_centroid <- function(p, centroid_row, colour, size = CENTROID_SIZE) {
+  p +
+    geom_point(
+      data  = centroid_row,
+      aes(x = lon, y = lat),
+      color = colour,
+      fill  = "white",
+      shape = 21,       # filled circle with border
+      size  = size,
+      stroke = 1.5
+    ) +
+    geom_text(
+      data  = centroid_row,
+      aes(x = lon, y = lat, label = period_labels[as.character(period)]),
+      vjust = -1, size = 3, color = colour, fontface = "bold"
+    )
+}
+```
+
+
+# Add all three centroids.
+### Legacy code for connecting arrows. Is currently omitted, but naming is still there from earlier
+```{r}
+add_centroid_trajectory <- function(p, centroids_df, colours, size = CENTROID_SIZE) {
+
+  segments <- centroids_df %>%
+    mutate(
+      lon_end = lead(lon),
+      lat_end = lead(lat)
+    ) %>%
+    filter(!is.na(lon_end))
+
+  p +
+    geom_point(
+      data  = centroids_df,
+      aes(x = lon, y = lat, color = period),
+      shape = 19,
+      size  = size
+    ) +
+    scale_color_manual(
+      values = colours,
+      labels = period_labels,
+      name   = "Period"
+    ) +
+    geom_text(
+      data  = centroids_df,
+      aes(x = lon, y = lat, label = period_labels[as.character(period)]),
+      vjust = -1, size = 3, fontface = "bold",
+      color = colours[as.character(centroids_df$period)]
+    )
+}
+```
+
+
+
+# Per-period KDE plots with single centroids
+```{r}
+centroid_pre  <- centroids %>% filter(period == "pre_crisis")  %>% mutate(period = period)
+centroid_peak <- centroids %>% filter(period == "crisis_peak") %>% mutate(period = period)
+centroid_post <- centroids %>% filter(period == "post_crisis") %>% mutate(period = period)
+
+p_pre <- plot_kde_base(
+  raster_to_df(kde_pre_r),
+  period_labels["pre_crisis"]
+) %>% add_centroid(centroid_pre,  period_colours["pre_crisis"])
+
+p_peak <- plot_kde_base(
+  raster_to_df(kde_peak_r),
+  period_labels["crisis_peak"]
+) %>% add_centroid(centroid_peak, period_colours["crisis_peak"])
+
+p_post <- plot_kde_base(
+  raster_to_df(kde_post_r),
+  period_labels["post_crisis"]
+) %>% add_centroid(centroid_post, period_colours["post_crisis"])
+```
+
+
+# Difference raster plots between periods
+```{r}
+# Shared scale for both difference maps
+
+shared_limit <- quantile(
+  c(
+    abs(values(diff_crisis)),
+    abs(values(diff_recovery))
+  ),
+  probs = 0.999,
+  na.rm = TRUE
+)
+
+centroid_diff_crisis  <- centroids %>% filter(period != "post_crisis")  %>% mutate(period = period)
+
+p_diff_crisis <- plot_kde_base(
+  raster_to_df(diff_crisis),
+  "Change in Attention: Crisis Peak vs Pre-Crisis",
+  diverging = TRUE,
+  shared_limit = shared_limit
+) %>%
+  add_centroid_trajectory(
+    centroid_diff_crisis,
+    period_colours
+  )
+
+
+centroid_diff_recovery  <- centroids %>% filter(period != "pre_crisis")  %>% mutate(period = period)
+
+p_diff_recovery <- plot_kde_base(
+  raster_to_df(diff_recovery),
+  "Change in Attention: Post-Crisis vs Crisis Peak",
+  diverging = TRUE,
+  shared_limit = shared_limit
+) %>%
+  add_centroid_trajectory(
+    centroid_diff_recovery,
+    period_colours
+  )
+```
+
+
+# Combine relevant figures
+
+```{r}
+# Three-period overview with individual centroids
+p_overview <- p_pre / p_peak / p_post +
+  plot_annotation(
+    title    = "Geographic attention in Danish news coverage by period",
+    subtitle = "KDE density surface with weighted mention centroid (circle)",
+    theme    = theme(plot.title = element_text(size = 13, face = "bold"))
+  )
+
+# Difference maps with full trajectory
+p_diffs <- p_diff_crisis | p_diff_recovery +
+  plot_annotation(
+    title    = "Shifts in geographic attention: raster difference + centroid trajectory",
+    subtitle = "Red = gained attention, blue = lost. Arrows show centroid movement pre → peak → post",
+    theme    = theme(plot.title = element_text(size = 13, face = "bold"))
+  )
+```
+
+
+# Save
+
+```{r}
+ggsave("../out/kde/kde_centroid_overview.png", p_overview,
+       width = 10, height = 16, dpi = 300)
+
+ggsave("../out/kde/kde_centroid_diffs.png", p_diffs,
+       width = 16, height = 7, dpi = 300)
+
+ggsave("../out/kde/kde_centroid_pre.png",  p_pre,  width = 10, height = 6, dpi = 300)
+ggsave("../out/kde/kde_centroid_peak.png", p_peak, width = 10, height = 6, dpi = 300)
+ggsave("../out/kde/kde_centroid_post.png", p_post, width = 10, height = 6, dpi = 300)
+
+ggsave("../out/kde/kde_diff_crisis_centroid.png",   p_diff_crisis,   width = 10, height = 6, dpi = 300)
+ggsave("../out/kde/kde_diff_recovery_centroid.png",  p_diff_recovery, width = 10, height = 6, dpi = 300)
+
+```
+
+
+```{r}
+cat("\nCentroid coordinates:\n")
+print(centroids)
+```
+
